@@ -1,0 +1,9 @@
+# Linear / Modern 深色主题：统一 Streamlit 原生控件（按钮/输入框/侧边栏/expander 等）
+# 自定义的环境光晕、玻璃卡、渐变标题等“签名层”由 app.py 注入的 CSS 负责。
+[theme]
+base = "dark"
+primaryColor = "#5E6AD2"
+backgroundColor = "#050506"
+secondaryBackgroundColor = "#0e0e13"
+textColor = "#EDEDEF"
+font = "sans serif"
