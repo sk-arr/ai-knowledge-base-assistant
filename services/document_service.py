@@ -1,3 +1,4 @@
+import io
 import re
 from typing import List, Dict, Tuple
 
@@ -6,18 +7,62 @@ from typing import List, Dict, Tuple
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 
 
+def _read_text_bytes(raw_bytes: bytes) -> str:
+    """纯文本/Markdown：优先 UTF-8，失败退回 GBK。"""
+    try:
+        return raw_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw_bytes.decode("gbk", errors="ignore")
+
+
+def _read_pdf(raw_bytes: bytes) -> str:
+    """PDF：逐页抽取文本，页间用空行分隔（便于按段落切分）。"""
+    from pypdf import PdfReader
+
+    reader = PdfReader(io.BytesIO(raw_bytes))
+    pages = []
+    for page in reader.pages:
+        text = (page.extract_text() or "").strip()
+        if text:
+            pages.append(text)
+    return "\n\n".join(pages)
+
+
+def _read_docx(raw_bytes: bytes) -> str:
+    """DOCX：抽取段落文本，并把 Word 标题样式转成 Markdown 标题，以复用结构切分。"""
+    import docx
+
+    document = docx.Document(io.BytesIO(raw_bytes))
+    parts = []
+    for para in document.paragraphs:
+        text = para.text.strip()
+        if not text:
+            continue
+        style_name = (para.style.name or "") if para.style else ""
+        if style_name.startswith("Heading"):
+            digits = "".join(ch for ch in style_name if ch.isdigit())
+            level = min(max(int(digits) if digits else 1, 1), 6)
+            parts.append("#" * level + " " + text)
+        else:
+            parts.append(text)
+    return "\n\n".join(parts)
+
+
 def read_uploaded_file(uploaded_file) -> str:
     """
-    Read TXT or MD uploaded file content as UTF-8 text.
+    按扩展名读取上传文件为纯文本：支持 TXT / MD / PDF / DOCX。
     """
     if uploaded_file is None:
         return ""
 
     raw_bytes = uploaded_file.getvalue()
-    try:
-        return raw_bytes.decode("utf-8")
-    except UnicodeDecodeError:
-        return raw_bytes.decode("gbk", errors="ignore")
+    name = (getattr(uploaded_file, "name", "") or "").lower()
+
+    if name.endswith(".pdf"):
+        return _read_pdf(raw_bytes)
+    if name.endswith(".docx"):
+        return _read_docx(raw_bytes)
+    return _read_text_bytes(raw_bytes)
 
 
 def normalize_text(text: str) -> str:

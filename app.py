@@ -391,10 +391,10 @@ with input_col:
     )
 
     uploaded_files = st.file_uploader(
-        "上传 TXT 或 MD 文档（可多选）",
-        type=["txt", "md"],
+        "上传 TXT / MD / PDF / DOCX 文档（可多选）",
+        type=["txt", "md", "pdf", "docx"],
         accept_multiple_files=True,
-        help="可一次选择多个公司制度、项目说明、培训资料等纯文本文件，跨文档统一检索。",
+        help="可一次选择多个公司制度、项目说明、培训资料等文档，跨文档统一检索。",
     )
 
     # 用「文件名+大小」做签名，仅在上传集合变化时重新解析，避免每次交互重复切分

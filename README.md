@@ -8,8 +8,8 @@
 
 ## 功能列表
 
-- 支持**同时上传多个** TXT / MD 文档，跨文档统一检索，引用标明来源
-- 自动解析并按结构切分为知识片段
+- 支持**同时上传多个** TXT / MD / PDF / DOCX 文档，跨文档统一检索，引用标明来源
+- 自动解析并按结构切分为知识片段（Word 标题样式会转成层级面包屑）
 - **混合检索**：BM25（字面）+ bge 向量（语义）加权召回 Top-K 相关片段
 - **真实大模型生成**：把检索片段作为上下文传给 Claude，生成「简要结论 / 依据摘要 / 建议下一步」；无 API Key 时回退 Mock
 - **相关度门槛防幻觉**：检索不到足够相关的内容时，直接回答「文档中未找到相关内容」，不编造依据
@@ -37,6 +37,7 @@
 ## 技术栈
 
 - Python / Streamlit
+- 文档解析：pypdf（PDF）、python-docx（Word）
 - 检索：jieba 分词、rank_bm25、sentence-transformers（`BAAI/bge-small-zh-v1.5`）、numpy
 - 生成：anthropic 官方 SDK（`claude-opus-4-8`，结构化输出）
 - 存储与导出：JSON 本地历史、Markdown 导出
@@ -119,7 +120,7 @@ python eval/evaluate.py
 
 ## 后续规划
 
-- 支持 PDF / DOCX 文档解析
+- 扫描版 PDF 的 OCR 识别（当前仅支持文本型 PDF）
 - 扩充评测集规模，加入更多边界用例持续回归
 - Prompt 模板管理、用户权限与知识库分组
 
