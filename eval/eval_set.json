@@ -1,0 +1,16 @@
+{
+  "docs": ["sample_docs/company_ai_policy.md", "sample_docs/hr_reimbursement_policy.md"],
+  "cases": [
+    {"question": "使用 AI 工具时哪些敏感信息不能上传？", "expect_keyword": "账号密码", "expect_source": "company_ai_policy.md"},
+    {"question": "AI 生成的内容可以直接当结论用吗？", "expect_keyword": "人工复核", "expect_source": "company_ai_policy.md"},
+    {"question": "公司鼓励用 AI 辅助做哪些工作？", "expect_keyword": "会议纪要", "expect_source": "company_ai_policy.md"},
+    {"question": "内部效率工具上线前需要做什么？", "expect_keyword": "基础测试", "expect_source": "company_ai_policy.md"},
+    {"question": "后续大模型会探索用在哪些业务场景？", "expect_keyword": "客服问答", "expect_source": "company_ai_policy.md"},
+    {"question": "差旅费报销要在多久之内提交？", "expect_keyword": "十个工作日", "expect_source": "hr_reimbursement_policy.md"},
+    {"question": "迟到多长时间会被算作旷工？", "expect_keyword": "旷工半天", "expect_source": "hr_reimbursement_policy.md"},
+    {"question": "请病假需要提供什么材料？", "expect_keyword": "病假证明", "expect_source": "hr_reimbursement_policy.md"},
+    {"question": "今天上证指数涨了吗？", "expect_relevant": false},
+    {"question": "推荐一部好看的科幻电影", "expect_relevant": false},
+    {"question": "明天北京会下雨吗？", "expect_relevant": false}
+  ]
+}
