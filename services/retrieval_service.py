@@ -21,6 +21,13 @@ STOPWORDS = {
 BM25_WEIGHT = 0.4
 VECTOR_WEIGHT = 0.6
 
+# 相关度门槛（绝对信号，不受归一化影响）：
+# - 向量：bge 余弦相似度经验值，真正相关约 0.45+，无关内容通常在 0.3~0.4。
+# - BM25：只在“明显命中”时才算相关；单个常见词（如“公司”）会得零点几的小分，
+#   不能据此判定相关，故要求一个较高的绝对分。
+VECTOR_RELEVANCE_MIN = 0.45
+BM25_RELEVANCE_MIN = 1.0
+
 
 def tokenize(text: str) -> List[str]:
     """
@@ -81,19 +88,36 @@ def retrieve_top_k(question: str, chunks: List[Dict[str, str]], top_k: int = 3) 
         vector_raw = _vector_scores(question, chunks)
         combined = BM25_WEIGHT * _normalize(bm25_raw) + VECTOR_WEIGHT * _normalize(vector_raw)
     else:
+        vector_raw = np.zeros(len(chunks))
         combined = bm25_raw
 
     scored_chunks = []
-    for chunk, score in zip(chunks, combined):
+    for chunk, score, bm25, vec in zip(chunks, combined, bm25_raw, vector_raw):
         scored_chunk = dict(chunk)
         scored_chunk["score"] = round(float(score), 4)
+        # 保留原始信号，供相关度门槛判断（下划线前缀表示内部字段）
+        scored_chunk["_bm25"] = float(bm25)
+        scored_chunk["_vec"] = float(vec)
         scored_chunks.append(scored_chunk)
 
     scored_chunks.sort(key=lambda item: item["score"], reverse=True)
-
-    # 优先返回有正分（真正匹配上）的片段；都为 0 时才退回前 top_k
-    positive_results = [item for item in scored_chunks if item["score"] > 0]
-    if positive_results:
-        return positive_results[:top_k]
-
     return scored_chunks[:top_k]
+
+
+def is_relevant(chunk: Dict[str, str]) -> bool:
+    """单个片段是否与问题真的相关。
+
+    有向量能力时：语义相似度过门槛，或 BM25 明显命中（高分）——以语义为主，
+    避免单个常见词的小分误判。无向量能力（纯 BM25）时：有字面重叠即算相关。
+    """
+    if embedding_service.is_available():
+        return (
+            chunk.get("_vec", 0.0) >= VECTOR_RELEVANCE_MIN
+            or chunk.get("_bm25", 0.0) >= BM25_RELEVANCE_MIN
+        )
+    return chunk.get("_bm25", 0.0) > 0.0
+
+
+def has_relevant(chunks: List[Dict[str, str]]) -> bool:
+    """检索结果里是否存在真正相关的片段。"""
+    return any(is_relevant(chunk) for chunk in chunks)
