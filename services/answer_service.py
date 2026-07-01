@@ -66,6 +66,17 @@ def generate_answer(question: str, chunks: List[Dict[str, str]]) -> Dict[str, st
         # 空问题/无片段的提示语与 Mock 一致，直接复用
         return generate_mock_answer(question, chunks)
 
+    # 相关度门槛：检索到的片段都不够相关，就直说没找到——
+    # 既避免把无关内容当证据（防幻觉），也省掉一次无意义的大模型调用。
+    from services import retrieval_service
+
+    if not retrieval_service.has_relevant(chunks):
+        return {
+            "conclusion": "文档中未找到与该问题相关的内容。",
+            "evidence": "检索到的片段与问题相关度过低，未作为回答依据。",
+            "next_step": "请换一种说法提问，或上传包含相关内容的文档后重试。",
+        }
+
     if _llm_enabled():
         try:
             return _generate_llm_answer(question, chunks)
