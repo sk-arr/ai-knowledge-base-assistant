@@ -1,8 +1,11 @@
 import re
 from typing import List, Dict
 
+import numpy as np
 import jieba
 from rank_bm25 import BM25Okapi
+
+from services import embedding_service
 
 
 # 常见中文停用词 + 标点，切词后过滤掉，避免“的/是/公司”这类高频词干扰排序。
@@ -13,6 +16,10 @@ STOPWORDS = {
     "这", "那", "着", "吗", "呢", "吧", "啊", "把", "被", "让", "给", "为",
     "请问", "请", "问",
 }
+
+# 混合检索权重：向量（语义）占比略高于 BM25（字面）。
+BM25_WEIGHT = 0.4
+VECTOR_WEIGHT = 0.6
 
 
 def tokenize(text: str) -> List[str]:
@@ -32,30 +39,52 @@ def tokenize(text: str) -> List[str]:
     return tokens
 
 
+def _bm25_scores(question: str, chunks: List[Dict[str, str]]) -> np.ndarray:
+    """按片段顺序返回 BM25 原始分数（字面匹配）。"""
+    corpus_tokens = [tokenize(chunk.get("text", "")) for chunk in chunks]
+    query_tokens = tokenize(question)
+    if not query_tokens or not any(corpus_tokens):
+        return np.zeros(len(chunks))
+    bm25 = BM25Okapi(corpus_tokens)
+    return np.asarray(bm25.get_scores(query_tokens), dtype=np.float64)
+
+
+def _vector_scores(question: str, chunks: List[Dict[str, str]]) -> np.ndarray:
+    """按片段顺序返回向量余弦相似度（语义匹配）。向量已归一化，点积即余弦。"""
+    chunk_vectors = embedding_service.embed_texts([c.get("text", "") for c in chunks])
+    query_vector = embedding_service.embed_query(question)
+    return chunk_vectors @ query_vector
+
+
+def _normalize(scores: np.ndarray) -> np.ndarray:
+    """按最大值归一到 [0, 1]，让 BM25 和向量分数能相加。全 0 时保持全 0。"""
+    top = scores.max()
+    if top <= 0:
+        return np.zeros_like(scores)
+    return scores / top
+
+
 def retrieve_top_k(question: str, chunks: List[Dict[str, str]], top_k: int = 3) -> List[Dict[str, str]]:
     """
-    用 BM25 对片段排序，返回相关度最高的 top_k 个片段。
+    混合检索：BM25（字面）+ bge 向量（语义）加权融合后取 top_k。
 
-    BM25 是搜索引擎常用的排序算法，相比旧版的“token 重叠计数”多做了两件事：
-      1. IDF 加权：越罕见的词越能定位答案，权重越高；
-      2. 长度归一化：长片段不会因为字数多就天然占便宜。
+    - 字面匹配保证关键词精确命中；
+    - 语义匹配能召回换了说法的内容（如“报销”≈“费用申请”）；
+    - 若环境未装向量依赖，自动退回纯 BM25，应用仍可运行。
     """
     if not chunks:
         return []
 
-    # 对每个片段分词，作为 BM25 的语料库
-    corpus_tokens = [tokenize(chunk.get("text", "")) for chunk in chunks]
-    query_tokens = tokenize(question)
+    bm25_raw = _bm25_scores(question, chunks)
 
-    # 问题为空，或所有片段都切不出有效词，退回原始顺序（保持可用）
-    if not query_tokens or not any(corpus_tokens):
-        return [dict(chunk, score=0.0) for chunk in chunks[:top_k]]
-
-    bm25 = BM25Okapi(corpus_tokens)
-    scores = bm25.get_scores(query_tokens)
+    if embedding_service.is_available():
+        vector_raw = _vector_scores(question, chunks)
+        combined = BM25_WEIGHT * _normalize(bm25_raw) + VECTOR_WEIGHT * _normalize(vector_raw)
+    else:
+        combined = bm25_raw
 
     scored_chunks = []
-    for chunk, score in zip(chunks, scores):
+    for chunk, score in zip(chunks, combined):
         scored_chunk = dict(chunk)
         scored_chunk["score"] = round(float(score), 4)
         scored_chunks.append(scored_chunk)
