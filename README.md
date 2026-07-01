@@ -57,8 +57,12 @@ ai-knowledge-base-assistant/
 │  └─ storage.py
 ├─ data/
 │  └─ history.json
+├─ eval/
+│  ├─ eval_set.json           # 检索评测用例（问题→期望关键词/来源）
+│  └─ evaluate.py             # 评测脚本，算命中率与拒答准确率
 └─ sample_docs/
-   └─ company_ai_policy.md
+   ├─ company_ai_policy.md
+   └─ hr_reimbursement_policy.md
 ```
 
 ## 运行方式
@@ -90,8 +94,20 @@ streamlit run app.py
 1. 页面上传 `sample_docs/company_ai_policy.md`
 2. 输入相关问题，例如：`使用 AI 工具时哪些敏感信息不能上传？`
 3. 点击「检索资料并生成回答」，查看回答、依据摘要和引用片段
-4. 试试无关问题（如「公司食堂几点开饭？」），验证「未找到相关内容」的防幻觉行为
+4. 试试领域外问题（如「今天上证指数涨了吗？」），验证「未找到相关内容」的防幻觉行为
 5. 点击 Markdown 导出按钮
+
+## 检索评测
+
+用 `eval/eval_set.json` 里的用例量化检索效果，把「看着还行」变成可复现的数字：
+
+```bash
+python eval/evaluate.py
+```
+
+指标：**Top-1 / Top-3 命中率**（期望关键词是否出现在检索结果中）、**来源路由命中率**（多文档下 Top-1 是否来自正确文档）、**拒答准确率**（领域外问题是否被正确判为「未找到」）。当前样例集（2 文档、11 用例）四项指标均为 100%。
+
+> 相关度门槛（`VECTOR_RELEVANCE_MIN`）是可调旋钮：调高更保守（少误答、可能漏答），调低更激进。评测集正是用来在调参时观察这一权衡的。
 
 ## 项目亮点
 
@@ -104,7 +120,7 @@ streamlit run app.py
 ## 后续规划
 
 - 支持 PDF / DOCX 文档解析
-- 引入检索评测集，量化召回命中率
+- 扩充评测集规模，加入更多边界用例持续回归
 - Prompt 模板管理、用户权限与知识库分组
 
 ## 与 AI 应用开发岗位的匹配点
