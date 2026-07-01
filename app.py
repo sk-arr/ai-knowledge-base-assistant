@@ -6,7 +6,8 @@ from services.document_service import (
     get_document_stats,
 )
 from services.retrieval_service import retrieve_top_k
-from services.answer_service import generate_mock_answer, build_markdown_answer
+from services.answer_service import generate_answer, build_markdown_answer
+from services.answer_service import MODEL as ANSWER_MODEL, _llm_enabled
 from utils.storage import save_qa_record, load_history
 
 
@@ -374,7 +375,10 @@ with st.sidebar:
     )
 
     st.markdown("### 当前版本")
-    st.info("当前为本地检索 + Mock 回答演示版，后续可接入真实大模型 API。")
+    if _llm_enabled():
+        st.success(f"回答引擎：真实大模型（{ANSWER_MODEL}）+ 混合检索。")
+    else:
+        st.info("回答引擎：本地检索 + Mock 演示。设置 ANTHROPIC_API_KEY 后自动切换为真实大模型。")
 
 
 input_col, output_col = st.columns([0.92, 1.08], gap="large")
@@ -441,7 +445,7 @@ with input_col:
     ):
         st.session_state.question = question.strip()
         retrieved_chunks = retrieve_top_k(question, st.session_state.chunks, top_k=3)
-        answer = generate_mock_answer(question, retrieved_chunks)
+        answer = generate_answer(question, retrieved_chunks)
 
         st.session_state.retrieved_chunks = retrieved_chunks
         st.session_state.answer = answer

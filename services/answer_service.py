@@ -1,4 +1,82 @@
+import os
+import json
 from typing import List, Dict
+
+
+# 大模型只允许返回这三个字段，正好接住前端的三段式展示（结论/依据/下一步）。
+ANSWER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "conclusion": {"type": "string", "description": "简要结论，直接回答问题"},
+        "evidence": {"type": "string", "description": "依据摘要，指出结论来自哪些资料内容"},
+        "next_step": {"type": "string", "description": "建议下一步或人工复核提示"},
+    },
+    "required": ["conclusion", "evidence", "next_step"],
+    "additionalProperties": False,
+}
+
+# 强约束“只根据资料回答、无依据就说没找到”，对应项目主打的可信输出/防幻觉。
+SYSTEM_PROMPT = (
+    "你是企业知识库问答助手。只能依据用户提供的【资料片段】回答问题，"
+    "不得编造资料中不存在的内容。若资料无法回答，请在 conclusion 中明确说明"
+    "“文档中未找到相关依据”。evidence 要引用资料中的关键信息，next_step 给出"
+    "人工复核或补充资料的建议。全部用简体中文。"
+)
+
+# 默认用最新的 Claude Opus 4.8；可用环境变量 KB_MODEL 覆盖。
+MODEL = os.getenv("KB_MODEL", "claude-opus-4-8")
+
+
+def _llm_enabled() -> bool:
+    """有 API key 且未强制 Mock 时，走真实大模型。"""
+    if os.getenv("KB_FORCE_MOCK") == "1":
+        return False
+    return bool(os.getenv("ANTHROPIC_API_KEY"))
+
+
+def _generate_llm_answer(question: str, chunks: List[Dict[str, str]]) -> Dict[str, str]:
+    """把检索到的片段作为上下文传给 Claude，生成结构化回答。"""
+    import anthropic
+
+    context = "\n\n".join(
+        f"[资料片段{i}] {chunk.get('text', '')}" for i, chunk in enumerate(chunks, start=1)
+    )
+    client = anthropic.Anthropic()
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=1024,
+        system=SYSTEM_PROMPT,
+        output_config={"format": {"type": "json_schema", "schema": ANSWER_SCHEMA}},
+        messages=[
+            {
+                "role": "user",
+                "content": f"以下是检索到的资料：\n{context}\n\n请回答问题：{question}",
+            }
+        ],
+    )
+    text = next(block.text for block in response.content if block.type == "text")
+    return json.loads(text)
+
+
+def generate_answer(question: str, chunks: List[Dict[str, str]]) -> Dict[str, str]:
+    """
+    统一入口：优先真实大模型，失败或未配置 key 时自动回退到 Mock，保证演示不中断。
+    """
+    if not question.strip() or not chunks:
+        # 空问题/无片段的提示语与 Mock 一致，直接复用
+        return generate_mock_answer(question, chunks)
+
+    if _llm_enabled():
+        try:
+            return _generate_llm_answer(question, chunks)
+        except Exception as error:  # 网络/鉴权/解析等任何异常都优雅降级
+            fallback = generate_mock_answer(question, chunks)
+            fallback["conclusion"] = (
+                f"（大模型调用失败，已回退本地 Mock：{error}）" + fallback["conclusion"]
+            )
+            return fallback
+
+    return generate_mock_answer(question, chunks)
 
 
 def generate_mock_answer(question: str, chunks: List[Dict[str, str]]) -> Dict[str, str]:
