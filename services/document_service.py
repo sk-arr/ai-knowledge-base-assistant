@@ -1,4 +1,9 @@
-from typing import List, Dict
+import re
+from typing import List, Dict, Tuple
+
+
+# Markdown 标题行：1~6 个 # 加空格加标题文字
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 
 
 def read_uploaded_file(uploaded_file) -> str:
@@ -17,45 +22,116 @@ def read_uploaded_file(uploaded_file) -> str:
 
 def normalize_text(text: str) -> str:
     """
-    Clean text while keeping paragraph structure.
+    统一换行、去掉行尾空白，并把 3 个以上连续空行压成一个空行。
+    与旧版不同：保留单个空行，以便按段落切分（旧版会删掉所有空行）。
     """
-    lines = [line.strip() for line in text.splitlines()]
-    lines = [line for line in lines if line]
-    return "\n".join(lines)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = "\n".join(line.rstrip() for line in text.split("\n"))
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
-def split_text_into_chunks(text: str, chunk_size: int = 450, overlap: int = 80) -> List[Dict[str, str]]:
+def _split_into_sections(text: str) -> List[Tuple[str, str]]:
     """
-    Split text into overlapping chunks.
+    按 Markdown 标题把文档分节，返回 [(面包屑, 正文)]。
+    面包屑是标题层级路径，如“公司规范 > 使用范围”；标题前的内容归到空面包屑。
+    """
+    sections: List[Tuple[str, str]] = []
+    heading_stack: List[Tuple[int, str]] = []
+    body_lines: List[str] = []
+    breadcrumb = ""
+
+    def flush() -> None:
+        body = "\n".join(body_lines).strip()
+        if body:
+            sections.append((breadcrumb, body))
+
+    for line in text.split("\n"):
+        match = _HEADING_RE.match(line)
+        if match:
+            flush()
+            body_lines.clear()
+            level = len(match.group(1))
+            title = match.group(2).strip()
+            # 维护标题栈：遇到某级标题时，丢掉同级及更深的旧标题，再压入当前标题
+            heading_stack[:] = [h for h in heading_stack if h[0] < level]
+            heading_stack.append((level, title))
+            breadcrumb = " > ".join(t for _, t in heading_stack)
+        else:
+            body_lines.append(line)
+
+    flush()
+    return sections
+
+
+def _char_split(text: str, chunk_size: int, overlap: int) -> List[str]:
+    """对超长段落的兜底：按字符切，带 overlap 重叠。"""
+    pieces = []
+    start = 0
+    length = len(text)
+    while start < length:
+        end = min(start + chunk_size, length)
+        piece = text[start:end].strip()
+        if piece:
+            pieces.append(piece)
+        if end >= length:
+            break
+        start = max(end - overlap, start + 1)
+    return pieces
+
+
+def _pack_paragraphs(body: str, chunk_size: int, overlap: int) -> List[str]:
+    """
+    把段落贪心打包成不超过 chunk_size 的片段，尽量不拆散段落。
+    单个段落本身超长时，才对它按字符切。
+    """
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", body) if p.strip()]
+    pieces: List[str] = []
+    current = ""
+
+    for para in paragraphs:
+        if len(para) > chunk_size:
+            if current:
+                pieces.append(current)
+                current = ""
+            pieces.extend(_char_split(para, chunk_size, overlap))
+            continue
+
+        if current and len(current) + 1 + len(para) > chunk_size:
+            pieces.append(current)
+            current = para
+        else:
+            current = f"{current}\n{para}" if current else para
+
+    if current:
+        pieces.append(current)
+    return pieces
+
+
+def split_text_into_chunks(text: str, chunk_size: int = 300, overlap: int = 60) -> List[Dict[str, str]]:
+    """
+    结构感知切分：先按 Markdown 标题分节，再按段落打包成片段。
+    相比旧版“固定字数硬切”，不会把句子/段落拦腰截断，且每个片段带所在小节标题，
+    检索能命中标题关键词，引用来源也更清晰。
     """
     text = normalize_text(text)
     if not text:
         return []
 
-    chunks = []
-    start = 0
-    chunk_index = 1
-    text_length = len(text)
-
-    while start < text_length:
-        end = min(start + chunk_size, text_length)
-        chunk_text = text[start:end].strip()
-
-        if chunk_text:
+    chunks: List[Dict[str, str]] = []
+    index = 1
+    for breadcrumb, body in _split_into_sections(text):
+        for piece in _pack_paragraphs(body, chunk_size, overlap):
+            # 面包屑并入片段文本：既利于检索命中标题，也让引用更好读
+            chunk_text = f"【{breadcrumb}】\n{piece}" if breadcrumb else piece
             chunks.append(
                 {
-                    "chunk_id": f"片段 {chunk_index}",
+                    "chunk_id": f"片段 {index}",
+                    "heading": breadcrumb,
                     "text": chunk_text,
-                    "start": str(start),
-                    "end": str(end),
                 }
             )
-            chunk_index += 1
-
-        if end >= text_length:
-            break
-
-        start = max(end - overlap, start + 1)
+            index += 1
 
     return chunks
 
