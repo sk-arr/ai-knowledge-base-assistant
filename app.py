@@ -3,7 +3,6 @@ import streamlit as st
 from services.document_service import (
     read_uploaded_file,
     split_text_into_chunks,
-    get_document_stats,
 )
 from services.retrieval_service import retrieve_top_k
 from services.answer_service import generate_answer, build_markdown_answer
@@ -391,24 +390,43 @@ with input_col:
         unsafe_allow_html=True,
     )
 
-    uploaded_file = st.file_uploader(
-        "上传 TXT 或 MD 文档",
+    uploaded_files = st.file_uploader(
+        "上传 TXT 或 MD 文档（可多选）",
         type=["txt", "md"],
-        help="建议上传公司制度、项目说明、培训资料等纯文本文件。",
+        accept_multiple_files=True,
+        help="可一次选择多个公司制度、项目说明、培训资料等纯文本文件，跨文档统一检索。",
     )
 
-    if uploaded_file is not None:
-        text = read_uploaded_file(uploaded_file)
-        chunks = split_text_into_chunks(text)
-        stats = get_document_stats(uploaded_file.name, text, chunks)
+    # 用「文件名+大小」做签名，仅在上传集合变化时重新解析，避免每次交互重复切分
+    signature = [(f.name, f.size) for f in uploaded_files]
+    if uploaded_files and signature != st.session_state.get("upload_signature"):
+        all_chunks = []
+        total_chars = 0
+        names = []
+        for uploaded_file in uploaded_files:
+            text = read_uploaded_file(uploaded_file)
+            total_chars += len(text)
+            names.append(uploaded_file.name)
+            for chunk in split_text_into_chunks(text):
+                chunk["source"] = uploaded_file.name  # 标记片段来源文档
+                all_chunks.append(chunk)
 
-        st.session_state.document_text = text
-        st.session_state.chunks = chunks
-        st.session_state.doc_stats = stats
+        label = (
+            f"{len(names)} 个文档：{', '.join(names)}"
+            if len(names) > 1
+            else (names[0] if names else "未命名文档")
+        )
+        st.session_state.chunks = all_chunks
+        st.session_state.doc_stats = {
+            "filename": label,
+            "char_count": str(total_chars),
+            "chunk_count": str(len(all_chunks)),
+        }
+        st.session_state.upload_signature = signature
         st.session_state.answer = None
         st.session_state.retrieved_chunks = []
 
-        st.success("文档已解析并切分。")
+        st.success(f"已解析 {len(names)} 个文档，共切出 {len(all_chunks)} 个知识片段。")
 
     if st.session_state.doc_stats:
         stats = st.session_state.doc_stats
@@ -424,8 +442,9 @@ with input_col:
         )
 
         with st.expander("预览知识片段"):
-            for chunk in st.session_state.chunks[:3]:
-                st.markdown(f"**{chunk['chunk_id']}**")
+            for chunk in st.session_state.chunks[:5]:
+                source = chunk.get("source", "")
+                st.markdown(f"**{chunk['chunk_id']}**" + (f" · {source}" if source else ""))
                 st.write(chunk["text"][:300] + ("..." if len(chunk["text"]) > 300 else ""))
 
     st.markdown('<div class="section-label">STEP 02</div>', unsafe_allow_html=True)
@@ -513,7 +532,12 @@ with output_col:
 
         st.markdown("### 引用来源")
         for index, chunk in enumerate(chunks, start=1):
-            with st.expander(f"引用片段 {index}｜{chunk.get('chunk_id', '')}｜相关分数 {chunk.get('score', '')}"):
+            source = chunk.get("source", "")
+            title = f"引用片段 {index}"
+            if source:
+                title += f"｜{source}"
+            title += f"｜{chunk.get('chunk_id', '')}｜相关分数 {chunk.get('score', '')}"
+            with st.expander(title):
                 st.write(chunk.get("text", ""))
     else:
         st.info("上传文档并完成检索后，这里会展示回答、依据摘要和引用来源。")
